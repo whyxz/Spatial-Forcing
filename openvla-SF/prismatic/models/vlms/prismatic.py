@@ -53,19 +53,21 @@ class PrismaticVLM(VLM):
             enable_mixed_precision_training=enable_mixed_precision_training,
         )
 
-        # Set Weight Initialization Seed for Projector Consistency
-        torch.manual_seed(vision_backbone.embed_dim)
+        # Set Weight Initialization Seed for Projector Consistency without mutating global RNG state
+        fork_devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
+        with torch.random.fork_rng(devices=fork_devices):
+            torch.manual_seed(vision_backbone.embed_dim)
 
-        # Initialize Projection (Adapter) based on `arch_specifier`
-        self.arch_specifier = arch_specifier
-        if arch_specifier == "linear":
-            self.projector = LinearProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
-        elif arch_specifier.endswith("fused-gelu-mlp"):
-            self.projector = FusedMLPProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
-        elif arch_specifier.endswith("gelu-mlp"):
-            self.projector = MLPProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
-        else:
-            raise ValueError(f"PrismaticVLM with `{arch_specifier = }` is not supported!")
+            # Initialize Projection (Adapter) based on `arch_specifier`
+            self.arch_specifier = arch_specifier
+            if arch_specifier == "linear":
+                self.projector = LinearProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
+            elif arch_specifier.endswith("fused-gelu-mlp"):
+                self.projector = FusedMLPProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
+            elif arch_specifier.endswith("gelu-mlp"):
+                self.projector = MLPProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
+            else:
+                raise ValueError(f"PrismaticVLM with `{arch_specifier = }` is not supported!")
 
         # Trackers
         self.vision_backbone_requires_grad = False

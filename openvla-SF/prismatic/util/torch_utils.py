@@ -27,15 +27,26 @@ import torch
 # === Randomness ===
 
 
-def set_global_seed(seed: int, get_worker_init_fn: bool = False) -> Optional[Callable[[int], None]]:
+def set_global_seed(
+    seed: int,
+    get_worker_init_fn: bool = False,
+    deterministic: bool = True,
+) -> Optional[Callable[[int], None]]:
     """Sets seed for all randomness libraries (mostly random, numpy, torch) and produces a `worker_init_fn`"""
     assert np.iinfo(np.uint32).min < seed < np.iinfo(np.uint32).max, "Seed outside the np.uint32 bounds!"
 
     # Set Seed as an Environment Variable
     os.environ["EXPERIMENT_GLOBAL_SEED"] = str(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        torch.use_deterministic_algorithms(True)
 
     return worker_init_function if get_worker_init_fn else None
 

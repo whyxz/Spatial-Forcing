@@ -35,6 +35,23 @@ overwatch = initialize_overwatch(__name__)
 tf.config.set_visible_devices([], "GPU")
 
 
+def _configure_tf_determinism(seed: Optional[int], deterministic: bool) -> None:
+    if seed is not None:
+        tf.random.set_seed(seed)
+    if deterministic:
+        enable_determinism = getattr(tf.config.experimental, "enable_op_determinism", None)
+        if callable(enable_determinism):
+            enable_determinism()
+
+
+def _apply_tf_dataset_options(dataset: dl.DLataset, deterministic: bool) -> dl.DLataset:
+    options = tf.data.Options()
+    options.experimental_deterministic = deterministic
+    if hasattr(options, "deterministic"):
+        options.deterministic = deterministic
+    return dataset.with_options(options)
+
+
 # ruff: noqa: B006
 def make_dataset_from_rlds(
     name: str,
@@ -427,6 +444,8 @@ def make_single_dataset(
     train: bool,
     traj_transform_kwargs: dict = {},
     frame_transform_kwargs: dict = {},
+    seed: Optional[int] = None,
+    deterministic: bool = True,
 ) -> dl.DLataset:
     """Creates a single dataset from kwargs. Returns a dataset of trajectories.
 
@@ -436,12 +455,14 @@ def make_single_dataset(
         traj_transform_kwargs: kwargs passed to 'apply_trajectory_transforms'.
         frame_transform_kwargs: kwargs passed to 'get_frame_transforms'.
     """
+    _configure_tf_determinism(seed, deterministic)
     dataset, dataset_statistics = make_dataset_from_rlds(
         **dataset_kwargs,
         train=train,
     )
     dataset = apply_trajectory_transforms(dataset, **traj_transform_kwargs, train=train)
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
+    dataset = _apply_tf_dataset_options(dataset, deterministic)
 
     # this seems to reduce memory usage without affecting speed
     dataset = dataset.with_ram_budget(1)
@@ -463,6 +484,8 @@ def make_interleaved_dataset(
     balance_weights: bool = False,
     traj_transform_threads: Optional[int] = None,
     traj_read_threads: Optional[int] = None,
+    seed: Optional[int] = None,
+    deterministic: bool = True,
 ) -> dl.DLataset:
     """
     Creates an interleaved dataset from list of dataset configs (kwargs). Returns a dataset of batched frames.
@@ -497,6 +520,8 @@ def make_interleaved_dataset(
     # Check valid `traj_transform_kwargs` and `frame_transform_kwargs`
     if (traj_transform_kwargs is None) or (frame_transform_kwargs is None):
         raise ValueError("Missing `traj_transform_kwargs` and `frame_transform_kwargs`!")
+
+    _configure_tf_determinism(seed, deterministic)
 
     # Get Dataset Sizes
     dataset_sizes, all_dataset_statistics = [], {}
@@ -566,11 +591,16 @@ def make_interleaved_dataset(
 
     # Shuffle the Dataset
     #   =>> IMPORTANT :: Shuffle AFTER .cache(), or else memory will still leak!
-    dataset = dataset.shuffle(shuffle_buffer_size)
+    dataset = dataset.shuffle(
+        shuffle_buffer_size,
+        seed=seed,
+        reshuffle_each_iteration=train,
+    )
 
     # Apply Frame Transforms
     overwatch.info("Applying frame transforms on dataset...")
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
+    dataset = _apply_tf_dataset_options(dataset, deterministic)
 
     # [Contract] When training VLA Policies, we let the Collator handle Batching!
     if batch_size is not None:

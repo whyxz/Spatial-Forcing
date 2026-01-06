@@ -51,6 +51,7 @@ from prismatic.training.train_utils import (
     get_current_action_mask,
     get_next_actions_mask,
 )
+from prismatic.util import set_global_seed
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction
 from prismatic.vla.action_tokenizer import ActionTokenizer
 from prismatic.vla.constants import (
@@ -118,6 +119,10 @@ class FinetuneConfig:
     run_id_note: Optional[str] = None                # Extra note to add to end of run ID for logging
     run_id_override: Optional[str] = None            # Optional string to override the run ID with
     wandb_log_freq: int = 10                         # WandB logging frequency in steps
+
+    # Reproducibility
+    seed: int = 7                                    # Base random seed
+    deterministic: bool = True                       # Enforce deterministic CUDA/TF data pipeline behavior
 
     # fmt: on
 
@@ -790,6 +795,9 @@ def finetune(cfg: FinetuneConfig) -> None:
     torch.cuda.set_device(device_id)
     torch.cuda.empty_cache()
 
+    process_seed = cfg.seed + distributed_state.process_index
+    set_global_seed(process_seed, deterministic=cfg.deterministic)
+
     # Initialize wandb logging
     if distributed_state.is_main_process:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=run_id)
@@ -993,6 +1001,8 @@ def finetune(cfg: FinetuneConfig) -> None:
         resize_resolution=tuple(vla.module.config.image_sizes),
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
+        seed=process_seed,
+        deterministic=cfg.deterministic,
     )
     if cfg.use_val_set:
         val_dataset = RLDSDataset(
@@ -1003,6 +1013,8 @@ def finetune(cfg: FinetuneConfig) -> None:
             shuffle_buffer_size=cfg.shuffle_buffer_size // 10,
             image_aug=cfg.image_aug,
             train=False,
+            seed=process_seed,
+            deterministic=cfg.deterministic,
         )
 
     # [Important] Save dataset statistics so that we can unnormalize actions during inference
