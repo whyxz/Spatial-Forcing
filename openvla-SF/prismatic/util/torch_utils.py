@@ -33,9 +33,11 @@ def set_global_seed(seed: int, get_worker_init_fn: bool = False) -> Optional[Cal
 
     # Set Seed as an Environment Variable
     os.environ["EXPERIMENT_GLOBAL_SEED"] = str(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
     return worker_init_function if get_worker_init_fn else None
 

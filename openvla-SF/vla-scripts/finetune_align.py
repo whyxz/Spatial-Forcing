@@ -53,6 +53,7 @@ from prismatic.training.train_utils import (
     get_current_action_mask,
     get_next_actions_mask,
 )
+from prismatic.util import set_global_seed
 from prismatic.util.data_utils import PaddedCollatorForActionPrediction
 from prismatic.util.pooling_utils import custom_pooling
 from prismatic.vla.action_tokenizer import ActionTokenizer
@@ -118,6 +119,8 @@ class FinetuneConfig:
     resume_step: Optional[int] = None                # (When `resume==True`) Step number that we are resuming from
     image_aug: bool = True                           # If True, trains with image augmentations (HIGHLY RECOMMENDED)
     diffusion_sample_freq: int = 50                  # (When `use_diffusion==True`) Frequency for sampling in steps
+    seed: int = 7                                    # Random seed for reproducibility
+    deterministic: bool = True                       # If True, enable deterministic training behaviors
 
     # LoRA
     use_lora: bool = True                            # If True, uses LoRA fine-tuning
@@ -135,6 +138,21 @@ class FinetuneConfig:
     wandb_log_freq: int = 10                         # WandB logging frequency in steps
 
     # fmt: on
+
+
+def configure_reproducibility(seed: int, deterministic: bool) -> None:
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    if deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        os.environ.setdefault("TF_DETERMINISTIC_OPS", "1")
+        os.environ.setdefault("TF_CUDNN_DETERMINISTIC", "1")
+    set_global_seed(seed)
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 def remove_ddp_in_checkpoint(state_dict) -> dict:
@@ -844,6 +862,7 @@ def finetune(cfg: FinetuneConfig) -> None:
     # GPU setup
     distributed_state = PartialState()
     device_id = distributed_state.local_process_index
+    configure_reproducibility(cfg.seed, cfg.deterministic)
     torch.cuda.set_device(device_id)
     torch.cuda.empty_cache()
 
@@ -1064,6 +1083,7 @@ def finetune(cfg: FinetuneConfig) -> None:
         use_wrist_image=use_wrist_image,
         use_proprio=cfg.use_proprio,
     )
+    dataset_seed = cfg.seed + distributed_state.process_index
     train_dataset = RLDSDataset(
         cfg.data_root_dir,
         cfg.dataset_name,
@@ -1071,6 +1091,8 @@ def finetune(cfg: FinetuneConfig) -> None:
         resize_resolution=tuple(vla.module.config.image_sizes),
         shuffle_buffer_size=cfg.shuffle_buffer_size,
         image_aug=cfg.image_aug,
+        seed=dataset_seed,
+        deterministic=cfg.deterministic,
     )
     if cfg.use_val_set:
         val_dataset = RLDSDataset(
@@ -1081,6 +1103,8 @@ def finetune(cfg: FinetuneConfig) -> None:
             shuffle_buffer_size=cfg.shuffle_buffer_size // 10,
             image_aug=cfg.image_aug,
             train=False,
+            seed=dataset_seed,
+            deterministic=cfg.deterministic,
         )
 
     # [Important] Save dataset statistics so that we can unnormalize actions during inference

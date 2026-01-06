@@ -427,6 +427,8 @@ def make_single_dataset(
     train: bool,
     traj_transform_kwargs: dict = {},
     frame_transform_kwargs: dict = {},
+    seed: Optional[int] = None,
+    deterministic: bool = True,
 ) -> dl.DLataset:
     """Creates a single dataset from kwargs. Returns a dataset of trajectories.
 
@@ -436,12 +438,22 @@ def make_single_dataset(
         traj_transform_kwargs: kwargs passed to 'apply_trajectory_transforms'.
         frame_transform_kwargs: kwargs passed to 'get_frame_transforms'.
     """
+    if seed is not None:
+        tf.random.set_seed(seed)
+        if hasattr(tf.config.experimental, "enable_op_determinism") and deterministic:
+            tf.config.experimental.enable_op_determinism()
+
     dataset, dataset_statistics = make_dataset_from_rlds(
         **dataset_kwargs,
         train=train,
     )
     dataset = apply_trajectory_transforms(dataset, **traj_transform_kwargs, train=train)
     dataset = apply_frame_transforms(dataset, **frame_transform_kwargs, train=train)
+
+    if deterministic:
+        options = tf.data.Options()
+        options.experimental_deterministic = True
+        dataset = dataset.with_options(options)
 
     # this seems to reduce memory usage without affecting speed
     dataset = dataset.with_ram_budget(1)
@@ -463,6 +475,8 @@ def make_interleaved_dataset(
     balance_weights: bool = False,
     traj_transform_threads: Optional[int] = None,
     traj_read_threads: Optional[int] = None,
+    seed: Optional[int] = None,
+    deterministic: bool = True,
 ) -> dl.DLataset:
     """
     Creates an interleaved dataset from list of dataset configs (kwargs). Returns a dataset of batched frames.
@@ -487,6 +501,11 @@ def make_interleaved_dataset(
         traj_read_threads: total number of parallel read workers for trajectory transforms, distributed across
             datasets according to their sampling weights. If None, defaults to AUTOTUNE for every dataset.
     """
+    if seed is not None:
+        tf.random.set_seed(seed)
+        if hasattr(tf.config.experimental, "enable_op_determinism") and deterministic:
+            tf.config.experimental.enable_op_determinism()
+
     # Default to uniform sampling (if `sample_weights` is not specified)
     if not sample_weights:
         sample_weights = [1.0] * len(dataset_kwargs_list)
@@ -566,7 +585,7 @@ def make_interleaved_dataset(
 
     # Shuffle the Dataset
     #   =>> IMPORTANT :: Shuffle AFTER .cache(), or else memory will still leak!
-    dataset = dataset.shuffle(shuffle_buffer_size)
+    dataset = dataset.shuffle(shuffle_buffer_size, seed=seed, reshuffle_each_iteration=True)
 
     # Apply Frame Transforms
     overwatch.info("Applying frame transforms on dataset...")
@@ -575,6 +594,11 @@ def make_interleaved_dataset(
     # [Contract] When training VLA Policies, we let the Collator handle Batching!
     if batch_size is not None:
         dataset = dataset.batch(batch_size)
+
+    if deterministic:
+        options = tf.data.Options()
+        options.experimental_deterministic = True
+        dataset = dataset.with_options(options)
 
     # Note =>> Seems to reduce memory usage without affecting speed?
     dataset = dataset.with_ram_budget(1)

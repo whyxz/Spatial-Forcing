@@ -7,7 +7,7 @@ format to OpenVLA, IterableDataset shim.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Tuple, Type
+from typing import Any, Dict, Optional, Tuple, Type
 
 import numpy as np
 import torch
@@ -101,6 +101,8 @@ class RLDSDataset(IterableDataset):
         shuffle_buffer_size: int = 256_000,
         train: bool = True,
         image_aug: bool = False,
+        seed: Optional[int] = None,
+        deterministic: bool = True,
     ) -> None:
         """Lightweight wrapper around RLDS TFDS Pipeline for use with PyTorch/OpenVLA Data Loaders."""
         self.data_root_dir, self.data_mix, self.batch_transform = data_root_dir, data_mix, batch_transform
@@ -145,6 +147,8 @@ class RLDSDataset(IterableDataset):
             traj_transform_threads=len(mixture_spec),
             traj_read_threads=len(mixture_spec),
             train=train,
+            seed=seed,
+            deterministic=deterministic,
         )
 
         # If applicable, enable image augmentations
@@ -195,6 +199,8 @@ class EpisodicRLDSDataset(RLDSDataset):
             train=rlds_config["train"],
             traj_transform_kwargs=rlds_config["traj_transform_kwargs"],
             frame_transform_kwargs=rlds_config["frame_transform_kwargs"],
+            seed=rlds_config.get("seed"),
+            deterministic=rlds_config.get("deterministic", True),
         )
 
     def __iter__(self) -> Dict[str, Any]:
