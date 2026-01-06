@@ -54,18 +54,22 @@ class PrismaticVLM(VLM):
         )
 
         # Set Weight Initialization Seed for Projector Consistency
+        rng_state = torch.random.get_rng_state()
         torch.manual_seed(vision_backbone.embed_dim)
 
-        # Initialize Projection (Adapter) based on `arch_specifier`
-        self.arch_specifier = arch_specifier
-        if arch_specifier == "linear":
-            self.projector = LinearProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
-        elif arch_specifier.endswith("fused-gelu-mlp"):
-            self.projector = FusedMLPProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
-        elif arch_specifier.endswith("gelu-mlp"):
-            self.projector = MLPProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
-        else:
-            raise ValueError(f"PrismaticVLM with `{arch_specifier = }` is not supported!")
+        try:
+            # Initialize Projection (Adapter) based on `arch_specifier`
+            self.arch_specifier = arch_specifier
+            if arch_specifier == "linear":
+                self.projector = LinearProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
+            elif arch_specifier.endswith("fused-gelu-mlp"):
+                self.projector = FusedMLPProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
+            elif arch_specifier.endswith("gelu-mlp"):
+                self.projector = MLPProjector(vision_backbone.embed_dim, llm_backbone.embed_dim)
+            else:
+                raise ValueError(f"PrismaticVLM with `{arch_specifier = }` is not supported!")
+        finally:
+            torch.random.set_rng_state(rng_state)
 
         # Trackers
         self.vision_backbone_requires_grad = False
